@@ -136,8 +136,6 @@
     <p class="hint">
       The sheet should contain the columns <code>Date</code>, <code>Single</code>, <code>IRA</code>, <code>Trust Acct</code>, and <code>EJ</code> (or <code>EJ Total</code>) in the first row.
       <br />
-      Optional columns: <code>Total</code> and <code>Diff</code> (difference between the current total and the previous entry).
-      <br />
       The app uses public proxies so you can open it directly on mobile (no local server required).
       <br />
       If the online fetch fails, upload the <code>.xlsx</code> or <code>.csv</code> file below.
@@ -556,18 +554,6 @@
         return;
       }
 
-      const usedIndices = new Set(detectedInvestments.map(col => col.idx));
-      const totalCandidates = ['total', 'total geral', 'portfolio total'];
-      let totalIdx = findHeaderIndex(normalizedHeaders, totalCandidates);
-      if (totalIdx === -1) {
-        const ejTotalIdx = findHeaderIndex(normalizedHeaders, ['ej total']);
-        if (ejTotalIdx !== -1 && !usedIndices.has(ejTotalIdx)) {
-          totalIdx = ejTotalIdx;
-        }
-      }
-
-      const diffIdx = findHeaderIndex(normalizedHeaders, ['diff', 'dif', 'difference']);
-
       const records = [];
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
@@ -591,20 +577,6 @@
 
         if (!hasValue) continue;
 
-        if (totalIdx !== -1) {
-          record.total = toNumber(row[totalIdx]);
-        }
-        if (!Number.isFinite(record.total)) {
-          record.total = detectedInvestments.reduce((sum, col) => {
-            const val = record[col.key];
-            return sum + (Number.isFinite(val) ? val : 0);
-          }, 0);
-        }
-
-        if (diffIdx !== -1) {
-          record.diff = toNumber(row[diffIdx]);
-        }
-
         records.push(record);
       }
 
@@ -617,22 +589,17 @@
       records.sort((a, b) => a.date - b.date);
       let previousTotal = null;
       for (const rec of records) {
-        if (!Number.isFinite(rec.total)) {
-          rec.total = detectedInvestments.reduce((sum, col) => {
-            const val = rec[col.key];
-            return sum + (Number.isFinite(val) ? val : 0);
-          }, 0);
+        const computedTotal = detectedInvestments.reduce((sum, col) => {
+          const val = rec[col.key];
+          return sum + (Number.isFinite(val) ? val : 0);
+        }, 0);
+        rec.total = computedTotal;
+        if (previousTotal == null) {
+          rec.diff = 0;
+        } else {
+          rec.diff = computedTotal - previousTotal;
         }
-        if (!Number.isFinite(rec.diff)) {
-          if (previousTotal == null || !Number.isFinite(rec.total)) {
-            rec.diff = 0;
-          } else {
-            rec.diff = rec.total - previousTotal;
-          }
-        }
-        if (Number.isFinite(rec.total)) {
-          previousTotal = rec.total;
-        }
+        previousTotal = computedTotal;
       }
 
       const movements = records.map(rec => ({
