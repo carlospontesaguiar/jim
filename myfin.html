@@ -1,0 +1,780 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Financial KPIs (Gains x Losses)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 1.5rem;
+      background: #f5f5f5;
+      color: #222;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 1.6rem;
+    }
+    .card {
+      background: #fff;
+      padding: 1rem 1.2rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .file-input {
+      display: inline-block;
+      margin-top: .5rem;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.75rem;
+      margin-top: 0.75rem;
+    }
+    .kpi {
+      padding: 0.75rem;
+      border-radius: 6px;
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+    }
+    .kpi-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+      opacity: 0.7;
+      margin-bottom: 0.2rem;
+    }
+    .kpi-value {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+    .kpi-positive { color: #1b7e39; }
+    .kpi-negative { color: #b3261e; }
+    .kpi-neutral { color: #1f2a33; }
+
+    .error {
+      color: #b3261e;
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+    }
+    th, td {
+      padding: 0.4rem 0.5rem;
+      border-bottom: 1px solid #e0e0e0;
+      text-align: right;
+      white-space: nowrap;
+    }
+    th:first-child, td:first-child {
+      text-align: left;
+    }
+    th {
+      background: #f0f0f0;
+      font-weight: 600;
+    }
+
+    .tables-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1rem;
+      margin-top: 0.5rem;
+    }
+
+    .hint {
+      font-size: 0.85rem;
+      color: #555;
+      margin-top: 0.4rem;
+    }
+    .link-button {
+      border: none;
+      background: none;
+      padding: 0;
+      font: inherit;
+      color: #1a73e8;
+      cursor: pointer;
+    }
+    .link-button:hover {
+      text-decoration: underline;
+    }
+    tr.is-filtered {
+      background: #e8f0fe;
+    }
+    .table-empty {
+      text-align: center;
+      font-style: italic;
+      color: #666;
+    }
+    .trend-icon {
+      margin-left: 0.35rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      display: inline-block;
+    }
+    .trend-up {
+      color: #1a73e8;
+    }
+    .trend-down {
+      color: #d93025;
+    }
+  </style>
+  <!-- SheetJS (XLSX) CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <h1>Financial KPIs from XLSX</h1>
+
+  <div class="card">
+    <p><strong>Step 1:</strong> Load the published Google Sheets data.</p>
+    <p class="hint">
+      The sheet should contain the columns <code>Date</code>, <code>Single</code>, <code>IRA</code>, and <code>EJ</code> (or <code>EJ Total</code>) in the first row.
+      <br />
+      Optional columns: <code>Total</code> and <code>Diff</code> (difference between the current total and the previous entry).
+      <br />
+      The app uses public proxies so you can open it directly on mobile (no local server required).
+    </p>
+    <button id="refreshBtn" class="link-button" style="font-size:1rem;">↻ Refresh from Google Sheets</button>
+    <div id="error" class="error"></div>
+  </div>
+
+  <div class="card">
+    <h2>Overall Summary</h2>
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-title">Total Gained</div>
+        <div id="totalGain" class="kpi-value kpi-positive">$0.00</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-title">Total Lost</div>
+        <div id="totalLoss" class="kpi-value kpi-negative">$0.00</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-title">Net Result</div>
+        <div id="netResult" class="kpi-value kpi-neutral">$0.00</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-title"># of Entries</div>
+        <div id="countTx" class="kpi-value kpi-neutral">0</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Balances by Investment</h2>
+    <p class="hint">Latest entry for each type and the variation versus the previous record.</p>
+    <div id="investmentGrid" class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-title">Awaiting file</div>
+        <div class="kpi-value kpi-neutral">--</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>KPIs by Period</h2>
+    <div class="tables-container">
+      <div>
+        <h3>By Week (ISO)</h3>
+        <p class="hint" id="weeklyFilterHint">Showing all weeks.</p>
+        <table id="weeklyTable">
+          <thead>
+            <tr>
+              <th>Week</th>
+              <th>Gain</th>
+              <th>Loss</th>
+              <th>Net</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div>
+        <h3>By Month</h3>
+        <p class="hint">Click a month to filter the weekly table.</p>
+        <table id="monthlyTable">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Gain</th>
+              <th>Loss</th>
+              <th>Net</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Detailed Entries</h2>
+    <table id="snapshotsTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Single</th>
+          <th>IRA</th>
+          <th>EJ</th>
+          <th>Total</th>
+          <th>Diff</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    const errorDiv = document.getElementById('error');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const weeklyFilterHint = document.getElementById('weeklyFilterHint');
+    const weeklyTableEl = document.getElementById('weeklyTable');
+    const monthlyTableEl = document.getElementById('monthlyTable');
+    const SHEET_URLS = [
+      'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
+      'https://cors.isomorphic-git.org/https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
+      'https://r.jina.ai/https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv'
+    ];
+    const investmentDefinitions = [
+      { key: 'single', labels: ['single'], display: 'Single' },
+      { key: 'ira', labels: ['ira'], display: 'IRA' },
+      { key: 'ej', labels: ['ej', 'trust acct', 'trust account', 'ej total'], display: 'EJ' }
+    ];
+    let weeklyData = {};
+    let monthlyData = {};
+    let monthWeekMap = {};
+    let activeMonthFilter = null;
+
+    refreshBtn?.addEventListener('click', loadGoogleSheet);
+    monthlyTableEl.addEventListener('click', handleMonthlyTableClick);
+    weeklyFilterHint.addEventListener('click', handleWeeklyFilterHintClick);
+    loadGoogleSheet();
+
+    async function loadGoogleSheet() {
+      showError('Loading data from Google Sheets...');
+      try {
+        const csvText = await fetchSheetCSV();
+        const workbook = XLSX.read(csvText, { type: 'string', raw: true });
+        const firstSheetName = workbook.SheetNames[0];
+        const ws = workbook.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+        processRows(rows);
+        showError('');
+      } catch (err) {
+        console.error(err);
+        showError(`Failed to load Google Sheets data. ${err.message || ''}`);
+      }
+    }
+
+    async function fetchSheetCSV() {
+      const errors = [];
+      for (const url of SHEET_URLS) {
+        try {
+          const response = await fetch(url, { mode: 'cors' });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const text = await response.text();
+          if (!text.trim()) throw new Error('Empty response');
+          return text;
+        } catch (err) {
+          errors.push(`${url}: ${err.message || err}`);
+        }
+      }
+      throw new Error(`Tried ${SHEET_URLS.length} URL(s) without success. Details: ${errors.join(' | ')}`);
+    }
+
+    function processRows(rows) {
+      if (!rows.length) {
+        showError('Empty spreadsheet.');
+        return;
+      }
+
+      const headers = rows[0].map(h => String(h || '').trim());
+      const normalizedHeaders = headers.map(normalizeHeader);
+      const dateIdx = findHeaderIndex(normalizedHeaders, ['date', 'data']);
+
+      if (dateIdx === -1) {
+        showError('Could not find the "Date" column on the first row.');
+        return;
+      }
+
+      const detectedInvestments = investmentDefinitions
+        .map(def => {
+          const idx = findHeaderIndex(normalizedHeaders, def.labels);
+          if (idx === -1) return null;
+          return {
+            ...def,
+            idx,
+            display: headers[idx] || def.display
+          };
+        })
+        .filter(Boolean);
+
+      if (!detectedInvestments.length) {
+        showError('Could not find the investment columns (Single, IRA, EJ).');
+        return;
+      }
+
+      const usedIndices = new Set(detectedInvestments.map(col => col.idx));
+      const totalCandidates = ['total', 'total geral', 'portfolio total'];
+      let totalIdx = findHeaderIndex(normalizedHeaders, totalCandidates);
+      if (totalIdx === -1) {
+        const ejTotalIdx = findHeaderIndex(normalizedHeaders, ['ej total']);
+        if (ejTotalIdx !== -1 && !usedIndices.has(ejTotalIdx)) {
+          totalIdx = ejTotalIdx;
+        }
+      }
+
+      const diffIdx = findHeaderIndex(normalizedHeaders, ['diff', 'dif', 'difference']);
+
+      const records = [];
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length === 0) continue;
+
+        const rawDate = row[dateIdx];
+        if (rawDate == null || rawDate === '') continue;
+        const date = parseExcelDate(rawDate);
+        if (!date) continue;
+
+        const record = { date };
+        let hasValue = false;
+
+        for (const col of detectedInvestments) {
+          const val = toNumber(row[col.idx]);
+          record[col.key] = val;
+          if (Number.isFinite(val)) {
+            hasValue = true;
+          }
+        }
+
+        if (!hasValue) continue;
+
+        if (totalIdx !== -1) {
+          record.total = toNumber(row[totalIdx]);
+        }
+        if (!Number.isFinite(record.total)) {
+          record.total = detectedInvestments.reduce((sum, col) => {
+            const val = record[col.key];
+            return sum + (Number.isFinite(val) ? val : 0);
+          }, 0);
+        }
+
+        if (diffIdx !== -1) {
+          record.diff = toNumber(row[diffIdx]);
+        }
+
+        records.push(record);
+      }
+
+      if (!records.length) {
+        showError('No valid rows found (invalid date/value).');
+        return;
+      }
+
+      records.sort((a, b) => a.date - b.date);
+      let previousTotal = null;
+      for (const rec of records) {
+        if (!Number.isFinite(rec.total)) {
+          rec.total = detectedInvestments.reduce((sum, col) => {
+            const val = rec[col.key];
+            return sum + (Number.isFinite(val) ? val : 0);
+          }, 0);
+        }
+        if (!Number.isFinite(rec.diff)) {
+          if (previousTotal == null || !Number.isFinite(rec.total)) {
+            rec.diff = 0;
+          } else {
+            rec.diff = rec.total - previousTotal;
+          }
+        }
+        if (Number.isFinite(rec.total)) {
+          previousTotal = rec.total;
+        }
+      }
+
+      const movements = records.map(rec => ({
+        date: rec.date,
+        amount: Number.isFinite(rec.diff) ? rec.diff : 0
+      }));
+
+      calcularKPIs(movements, records.length);
+      atualizarInvestimentos(records, detectedInvestments);
+      preencherSnapshots(records, detectedInvestments);
+    }
+
+    function showError(msg) {
+      errorDiv.textContent = msg;
+    }
+
+    function parseExcelDate(val) {
+      if (val instanceof Date) {
+        return val;
+      }
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (!trimmed) return null;
+        const tryNative = new Date(trimmed);
+        if (!isNaN(tryNative.getTime())) {
+          return tryNative;
+        }
+        const numericCandidate = Number(trimmed.replace(',', '.'));
+        if (Number.isFinite(numericCandidate)) {
+          val = numericCandidate;
+        } else {
+          return null;
+        }
+      }
+      if (typeof val === 'number') {
+        const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+        const date = new Date(excelEpoch.getTime() + val * 86400000);
+        if (isNaN(date.getTime())) return null;
+        return date;
+      }
+      return null;
+    }
+
+    function normalizeHeader(header) {
+      return String(header || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    }
+
+    function findHeaderIndex(headers, targets) {
+      if (!Array.isArray(headers)) return -1;
+      for (let i = 0; i < headers.length; i++) {
+        if (targets.includes(headers[i])) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    function toNumber(value) {
+      if (value === null || value === undefined || value === '') return null;
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+      }
+      const normalized = String(value).replace(/\s+/g, '').replace(',', '.');
+      const num = Number(normalized);
+      return Number.isFinite(num) ? num : null;
+    }
+
+    function calcularKPIs(records, totalSnapshots) {
+      let totalGain = 0;
+      let totalLoss = 0;
+      let net = 0;
+
+      const weekly = {};
+      const monthly = {};
+      const monthWeeks = {};
+
+      for (const r of records) {
+        const amount = r.amount;
+        net += amount;
+        if (amount > 0) totalGain += amount;
+        if (amount < 0) totalLoss += amount;
+
+        const wKey = getISOWeekKey(r.date);
+        const mKey = getMonthKey(r.date);
+
+        if (!weekly[wKey]) weekly[wKey] = { gain: 0, loss: 0, net: 0 };
+        if (!monthly[mKey]) monthly[mKey] = { gain: 0, loss: 0, net: 0 };
+        if (!monthWeeks[mKey]) monthWeeks[mKey] = new Set();
+
+        if (amount > 0) {
+          weekly[wKey].gain += amount;
+          monthly[mKey].gain += amount;
+        } else if (amount < 0) {
+          weekly[wKey].loss += amount;
+          monthly[mKey].loss += amount;
+        }
+        weekly[wKey].net += amount;
+        monthly[mKey].net += amount;
+        monthWeeks[mKey].add(wKey);
+      }
+
+      document.getElementById('totalGain').textContent = formatUSD(totalGain);
+      document.getElementById('totalLoss').textContent = formatUSD(totalLoss);
+      document.getElementById('netResult').textContent = formatUSD(net);
+      document.getElementById('countTx').textContent = totalSnapshots.toString();
+
+      weeklyData = weekly;
+      monthlyData = monthly;
+      monthWeekMap = Object.fromEntries(
+        Object.entries(monthWeeks).map(([key, set]) => [key, Array.from(set)])
+      );
+      if (activeMonthFilter && !monthWeekMap[activeMonthFilter]) {
+        activeMonthFilter = null;
+      }
+      renderWeeklyTable();
+      renderMonthlyTable();
+      updateWeeklyFilterHint();
+    }
+
+    function getISOWeekKey(date) {
+      const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+      const dayNum = d.getUTCDay() || 7;
+      d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+      const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+      const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+      const year = d.getUTCFullYear();
+      return `${year}-W${String(weekNo).padStart(2, '0')}`;
+    }
+
+    function getMonthKey(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      return `${year}-${month}`;
+    }
+
+    function formatUSD(value) {
+      if (!Number.isFinite(value)) return '-';
+      return value.toLocaleString('en-US', {
+        style: 'currency',
+        currency: 'USD'
+      });
+    }
+
+    function renderWeeklyTable() {
+      if (!weeklyTableEl) return;
+      const tbody = weeklyTableEl.querySelector('tbody');
+      tbody.innerHTML = '';
+      const keys = Object.keys(weeklyData || {});
+      if (!keys.length) return;
+
+      keys.sort();
+      let filteredKeys = keys;
+      if (activeMonthFilter && monthWeekMap[activeMonthFilter]) {
+        const allowed = new Set(monthWeekMap[activeMonthFilter]);
+        filteredKeys = keys.filter(key => allowed.has(key));
+      }
+
+      if (!filteredKeys.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="4" class="table-empty">No weeks for selected month.</td>`;
+        tbody.appendChild(tr);
+        return;
+      }
+
+      for (const key of filteredKeys) {
+        const rowData = weeklyData[key];
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${key}</td>
+          <td>${formatUSD(rowData.gain)}</td>
+          <td>${formatUSD(rowData.loss)}</td>
+          <td>${formatUSD(rowData.net)}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function renderMonthlyTable() {
+      if (!monthlyTableEl) return;
+      const tbody = monthlyTableEl.querySelector('tbody');
+      tbody.innerHTML = '';
+      const keys = Object.keys(monthlyData || {});
+      if (!keys.length) return;
+
+      keys.sort();
+      for (const key of keys) {
+        const rowData = monthlyData[key];
+        const tr = document.createElement('tr');
+        if (activeMonthFilter === key) {
+          tr.classList.add('is-filtered');
+        }
+        const labelCell = document.createElement('td');
+        if (monthWeekMap[key] && monthWeekMap[key].length) {
+          labelCell.innerHTML = `<button type="button" class="link-button" data-month="${key}">${formatMonthKey(key)}</button>`;
+        } else {
+          labelCell.textContent = formatMonthKey(key);
+        }
+        tr.appendChild(labelCell);
+
+        const gainTd = document.createElement('td');
+        gainTd.textContent = formatUSD(rowData.gain);
+        tr.appendChild(gainTd);
+
+        const lossTd = document.createElement('td');
+        lossTd.textContent = formatUSD(rowData.loss);
+        tr.appendChild(lossTd);
+
+        const netTd = document.createElement('td');
+        netTd.textContent = formatUSD(rowData.net);
+        tr.appendChild(netTd);
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    function updateWeeklyFilterHint() {
+      if (!weeklyFilterHint) return;
+      if (activeMonthFilter && monthWeekMap[activeMonthFilter]?.length) {
+        const label = formatMonthKey(activeMonthFilter);
+        weeklyFilterHint.innerHTML = `Showing weeks for <strong>${label}</strong>. <button type="button" class="link-button" data-action="clear-week-filter">Show all weeks</button>`;
+      } else {
+        weeklyFilterHint.textContent = 'Showing all weeks.';
+      }
+    }
+
+    function formatMonthKey(key) {
+      const [y, m] = key.split('-');
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const idx = parseInt(m, 10) - 1;
+      const labelMonth = monthNames[idx] || m;
+      return `${labelMonth}/${y}`;
+    }
+
+    function handleMonthlyTableClick(event) {
+      const button = event.target.closest('button[data-month]');
+      if (!button) return;
+      const monthKey = button.getAttribute('data-month');
+      activeMonthFilter = activeMonthFilter === monthKey ? null : monthKey;
+      renderWeeklyTable();
+      renderMonthlyTable();
+      updateWeeklyFilterHint();
+    }
+
+    function handleWeeklyFilterHintClick(event) {
+      const actionBtn = event.target.closest('[data-action="clear-week-filter"]');
+      if (!actionBtn) return;
+      activeMonthFilter = null;
+      renderWeeklyTable();
+      renderMonthlyTable();
+      updateWeeklyFilterHint();
+    }
+
+    function atualizarInvestimentos(records, investments) {
+      const grid = document.getElementById('investmentGrid');
+      grid.innerHTML = '';
+
+      if (!records.length) {
+        grid.innerHTML = `
+          <div class="kpi">
+            <div class="kpi-title">No data</div>
+            <div class="kpi-value kpi-neutral">--</div>
+          </div>
+        `;
+        return;
+      }
+
+      const latest = records[records.length - 1];
+      const fragment = document.createDocumentFragment();
+
+      for (const col of investments) {
+        const value = latest[col.key];
+        if (!Number.isFinite(value)) continue;
+        const card = document.createElement('div');
+        card.className = 'kpi';
+        card.innerHTML = `
+          <div class="kpi-title">${col.display}</div>
+          <div class="kpi-value kpi-neutral">${formatUSD(value)}</div>
+        `;
+        fragment.appendChild(card);
+      }
+
+      if (Number.isFinite(latest.total)) {
+        const totalCard = document.createElement('div');
+        totalCard.className = 'kpi';
+        totalCard.innerHTML = `
+          <div class="kpi-title">Consolidated total</div>
+          <div class="kpi-value kpi-neutral">${formatUSD(latest.total)}</div>
+        `;
+        fragment.appendChild(totalCard);
+      }
+
+      const diffValue = Number.isFinite(latest.diff) ? latest.diff : 0;
+      const diffClass = diffValue > 0 ? 'kpi-positive' : diffValue < 0 ? 'kpi-negative' : 'kpi-neutral';
+      const diffCard = document.createElement('div');
+      diffCard.className = 'kpi';
+      diffCard.innerHTML = `
+        <div class="kpi-title">Diff vs previous</div>
+        <div class="kpi-value ${diffClass}">${formatUSD(diffValue)}</div>
+      `;
+      fragment.appendChild(diffCard);
+
+      if (!fragment.childNodes.length) {
+        grid.innerHTML = `
+          <div class="kpi">
+            <div class="kpi-title">No values</div>
+            <div class="kpi-value kpi-neutral">--</div>
+          </div>
+        `;
+      } else {
+        grid.appendChild(fragment);
+      }
+    }
+
+    function preencherSnapshots(records, investments) {
+      const table = document.getElementById('snapshotsTable');
+      const thead = table.querySelector('thead');
+      const tbody = table.querySelector('tbody');
+      tbody.innerHTML = '';
+
+      if (!records.length) {
+        thead.innerHTML = `
+          <tr>
+            <th>Date</th>
+            <th>Total</th>
+            <th>Diff</th>
+          </tr>
+        `;
+        return;
+      }
+
+      const headers = ['Date', ...investments.map(col => col.display), 'Total', 'Diff'];
+      thead.innerHTML = `<tr>${headers.map(title => `<th>${title}</th>`).join('')}</tr>`;
+
+      const fragment = document.createDocumentFragment();
+      let previousTotal = null;
+      for (const record of records) {
+        const tr = document.createElement('tr');
+        const dateTd = document.createElement('td');
+        dateTd.textContent = formatDateLabel(record.date);
+        tr.appendChild(dateTd);
+
+        for (const col of investments) {
+          const td = document.createElement('td');
+          td.textContent = formatUSD(record[col.key]);
+          tr.appendChild(td);
+        }
+
+        const totalTd = document.createElement('td');
+        totalTd.textContent = formatUSD(record.total);
+        if (Number.isFinite(previousTotal) && Number.isFinite(record.total)) {
+          if (record.total > previousTotal) {
+            totalTd.innerHTML += ` <span class="trend-icon trend-up">&uarr;</span>`;
+          } else if (record.total < previousTotal) {
+            totalTd.innerHTML += ` <span class="trend-icon trend-down">&darr;</span>`;
+          }
+        }
+        tr.appendChild(totalTd);
+
+        const diffTd = document.createElement('td');
+        diffTd.textContent = formatUSD(record.diff);
+        diffTd.className = Number.isFinite(record.diff)
+          ? (record.diff > 0 ? 'kpi-positive' : record.diff < 0 ? 'kpi-negative' : 'kpi-neutral')
+          : '';
+        tr.appendChild(diffTd);
+
+        fragment.appendChild(tr);
+        if (Number.isFinite(record.total)) {
+          previousTotal = record.total;
+        }
+      }
+
+      tbody.appendChild(fragment);
+    }
+
+    function formatDateLabel(date) {
+      if (!(date instanceof Date) || isNaN(date.getTime())) return '-';
+      return date.toLocaleDateString('en-US');
+    }
+  </script>
+</body>
+</html>
