@@ -134,7 +134,7 @@
   <div class="card">
     <p><strong>Step 1:</strong> Load the published Google Sheets data.</p>
     <p class="hint">
-      The sheet should contain the columns <code>Date</code>, <code>Single</code>, <code>IRA</code>, <code>Trust Acct</code>, and <code>EJ</code> (or <code>EJ Total</code>) in the first row.
+      The sheet should contain the columns <code>Date</code>, <code>Single</code>, <code>IRA</code>, and <code>Trust Acct</code> in the first row.
       <br />
       The app uses public proxies so you can open it directly on mobile (no local server required).
       <br />
@@ -230,7 +230,6 @@
           <th>Single</th>
           <th>IRA</th>
           <th>Trust Acct</th>
-          <th>EJ</th>
           <th>Total</th>
           <th>Diff</th>
         </tr>
@@ -256,8 +255,7 @@
     const investmentDefinitions = [
       { key: 'single', labels: ['single'], display: 'Single' },
       { key: 'ira', labels: ['ira'], display: 'IRA' },
-      { key: 'trust', labels: ['trust acct', 'trust account', 'trust'], display: 'Trust Acct' },
-      { key: 'ej', labels: ['ej', 'ej total'], display: 'EJ' }
+      { key: 'trust', labels: ['trust acct', 'trust account', 'trust'], display: 'Trust Acct' }
     ];
     let weeklyData = {};
     let monthlyData = {};
@@ -550,7 +548,7 @@
         .filter(Boolean);
 
       if (!detectedInvestments.length) {
-        showError('Could not find the investment columns (Single, IRA, EJ).');
+        showError('Could not find the investment columns (Single, IRA, Trust Acct).');
         return;
       }
 
