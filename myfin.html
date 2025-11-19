@@ -129,12 +129,12 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-  <h1>Financial KPIs from XLSX - v2</h1>
+  <h1>Financial KPIs from XLSX</h1>
 
   <div class="card">
     <p><strong>Step 1:</strong> Load the published Google Sheets data.</p>
     <p class="hint">
-      The sheet should contain the columns <code>Date</code>, <code>Single</code>, <code>IRA</code>, and <code>EJ</code> (or <code>EJ Total</code>) in the first row.
+      The sheet should contain the columns <code>Date</code>, <code>Single</code>, <code>IRA</code>, <code>Trust Acct</code>, and <code>EJ</code> (or <code>EJ Total</code>) in the first row.
       <br />
       Optional columns: <code>Total</code> and <code>Diff</code> (difference between the current total and the previous entry).
       <br />
@@ -148,6 +148,10 @@
       <input class="file-input" type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
     </div>
     <div id="error" class="error"></div>
+    <details style="margin-top:0.6rem;">
+      <summary>Debug log</summary>
+      <pre id="debugLog" style="background:#111;color:#eee;padding:0.5rem;border-radius:6px;max-height:200px;overflow:auto;margin:0.4rem 0 0 0;"></pre>
+    </details>
   </div>
 
   <div class="card">
@@ -227,6 +231,7 @@
           <th>Date</th>
           <th>Single</th>
           <th>IRA</th>
+          <th>Trust Acct</th>
           <th>EJ</th>
           <th>Total</th>
           <th>Diff</th>
@@ -243,6 +248,7 @@
     const weeklyFilterHint = document.getElementById('weeklyFilterHint');
     const weeklyTableEl = document.getElementById('weeklyTable');
     const monthlyTableEl = document.getElementById('monthlyTable');
+    const debugLogEl = document.getElementById('debugLog');
     const SHEET_URLS = [
       'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
       'https://cors.isomorphic-git.org/https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
@@ -252,7 +258,8 @@
     const investmentDefinitions = [
       { key: 'single', labels: ['single'], display: 'Single' },
       { key: 'ira', labels: ['ira'], display: 'IRA' },
-      { key: 'ej', labels: ['ej', 'trust acct', 'trust account', 'ej total'], display: 'EJ' }
+      { key: 'trust', labels: ['trust acct', 'trust account', 'trust'], display: 'Trust Acct' },
+      { key: 'ej', labels: ['ej', 'ej total'], display: 'EJ' }
     ];
     let weeklyData = {};
     let monthlyData = {};
@@ -266,9 +273,12 @@
     loadGoogleSheet();
 
     async function loadGoogleSheet() {
+      clearDebug();
+      logDebug('Loading data from Google Sheets (CSV + JSONP fallback)...');
       showError('Loading data from Google Sheets...');
       try {
         const rows = await loadRowsFromPublishedSheet();
+        logDebug(`Received ${rows.length - 1} rows from online sheet.`);
         processRows(rows);
         showError('');
       } catch (err) {
@@ -282,10 +292,12 @@
       try {
         const csvText = await fetchSheetCSV();
         if (csvText) {
+          logDebug('CSV fetch succeeded, parsing...');
           return convertCSVToRows(csvText);
         }
       } catch (err) {
         csvErrors = err;
+        logDebug(`CSV fetch failed: ${err.message || err}`);
       }
       const jsonpRows = await loadRowsViaJSONP();
       if (jsonpRows && jsonpRows.length) {
@@ -301,26 +313,103 @@
       const errors = [];
       for (const url of SHEET_URLS) {
         try {
+            logDebug(`Trying CSV URL: ${url}`);
             const response = await fetch(url, { mode: 'cors' });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const text = await response.text();
             if (!text.trim()) throw new Error('Empty response');
+            logDebug(`Success from CSV URL: ${url} (bytes=${text.length})`);
             return text;
         } catch (err) {
             errors.push(`${url}: ${err.message || err}`);
+            logDebug(`Failed CSV URL: ${url} -> ${err.message || err}`);
         }
       }
       throw new Error(`CSV attempts failed. Details: ${errors.join(' | ')}`);
     }
 
     function convertCSVToRows(csvText) {
+      const sanitized = csvText.replace(/^\uFEFF/, '');
+      const delimiter = detectDelimiter(sanitized);
+      const parsed = simpleCSVParse(sanitized, delimiter);
+      if (parsed.length) {
+        logDebug(`CSV parsed with delimiter "${delimiter}". Rows: ${parsed.length - 1}`);
+        return parsed;
+      }
       const workbook = XLSX.read(csvText, { type: 'string', raw: true });
       const firstSheetName = workbook.SheetNames[0];
       const ws = workbook.Sheets[firstSheetName];
+      logDebug('CSV parser empty, falling back to SheetJS parse.');
       return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
     }
 
+    function detectDelimiter(text) {
+      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+      if (!lines.length) return ',';
+      const sample = lines[0];
+      const commaCount = (sample.match(/,/g) || []).length;
+      const semicolonCount = (sample.match(/;/g) || []).length;
+      const tabCount = (sample.match(/\t/g) || []).length;
+      let delimiter = ',';
+      let max = commaCount;
+      if (semicolonCount > max) {
+        delimiter = ';';
+        max = semicolonCount;
+      }
+      if (tabCount > max) {
+        delimiter = '\t';
+      }
+      return delimiter;
+    }
+
+    function simpleCSVParse(text, delimiter) {
+      const rows = [];
+      let current = [];
+      let value = '';
+      let insideQuotes = false;
+
+      const pushValue = () => {
+        current.push(value);
+        value = '';
+      };
+
+      const pushRow = () => {
+        if (current.length || value) {
+          // ensures last value added before pushing row
+          rows.push(current.slice());
+        }
+        current = [];
+      };
+
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (char === '"') {
+          if (insideQuotes && text[i + 1] === '"') {
+            value += '"';
+            i++;
+          } else {
+            insideQuotes = !insideQuotes;
+          }
+        } else if (char === delimiter && !insideQuotes) {
+          pushValue();
+        } else if ((char === '\n' || char === '\r') && !insideQuotes) {
+          if (char === '\r' && text[i + 1] === '\n') i++;
+          pushValue();
+          pushRow();
+        } else {
+          value += char;
+        }
+      }
+      if (value.length || current.length) {
+        pushValue();
+        pushRow();
+      }
+
+      return rows.filter(row => row.some(cell => cell !== ''));
+    }
+
     function loadRowsViaJSONP() {
+      logDebug('Falling back to JSONP endpoint...');
       return new Promise((resolve, reject) => {
         const callbackName = `sheetCallback_${Date.now()}`;
         const script = document.createElement('script');
@@ -333,14 +422,17 @@
           cleanup();
           try {
             const rows = convertGvizResponseToRows(response);
+            logDebug(`JSONP returned ${rows.length} rows.`);
             resolve(rows);
           } catch (err) {
+            logDebug(`JSONP parsing error: ${err.message || err}`);
             reject(err);
           }
         };
 
         script.onerror = () => {
           cleanup();
+          logDebug('JSONP script failed to load.');
           reject(new Error('JSONP request failed.'));
         };
 
@@ -383,6 +475,7 @@
 
       const isCSV = /\.csv$/i.test(file.name);
       showError(`Loading local ${isCSV ? 'CSV' : 'Excel'} file...`);
+      logDebug(`Loading local file: ${file.name} (${file.size} bytes)`); 
 
       const reader = new FileReader();
       reader.onload = function(evt) {
@@ -398,6 +491,7 @@
           const firstSheetName = workbook.SheetNames[0];
           const ws = workbook.Sheets[firstSheetName];
           const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+          logDebug(`Local file parsed with ${rows.length - 1} data rows.`);
           processRows(rows);
           showError('');
         } catch (err) {
@@ -425,14 +519,25 @@
         return;
       }
 
-      const headers = rows[0].map(h => String(h || '').trim());
+      const headerRowIndex = findHeaderRowIndex(rows);
+      if (headerRowIndex === -1) {
+        logDebug(`Could not locate header row. First row sample: ${JSON.stringify(rows[0])}`);
+        showError('Could not find the header row with "Date".');
+        return;
+      }
+
+      const headers = rows[headerRowIndex].map(h => String(h || '').trim());
       const normalizedHeaders = headers.map(normalizeHeader);
       const dateIdx = findHeaderIndex(normalizedHeaders, ['date', 'data']);
 
       if (dateIdx === -1) {
+        logDebug(`Header row content: ${JSON.stringify(headers)}`);
         showError('Could not find the "Date" column on the first row.');
         return;
       }
+
+      const dataRows = rows.slice(headerRowIndex + 1);
+      logDebug(`Processing ${dataRows.length} data rows with ${headers.length} columns (header at index ${headerRowIndex}).`);
 
       const detectedInvestments = investmentDefinitions
         .map(def => {
@@ -464,8 +569,8 @@
       const diffIdx = findHeaderIndex(normalizedHeaders, ['diff', 'dif', 'difference']);
 
       const records = [];
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
+      for (let i = 0; i < dataRows.length; i++) {
+        const row = dataRows[i];
         if (!row || row.length === 0) continue;
 
         const rawDate = row[dateIdx];
@@ -507,6 +612,7 @@
         showError('No valid rows found (invalid date/value).');
         return;
       }
+      logDebug(`Built ${records.length} normalized records.`);
 
       records.sort((a, b) => a.date - b.date);
       let previousTotal = null;
@@ -540,7 +646,19 @@
     }
 
     function showError(msg) {
+      if (msg) console.error('[Finance Dashboard]', msg);
       errorDiv.textContent = msg;
+      if (msg) logDebug(`ERROR: ${msg}`);
+    }
+
+    function logDebug(message) {
+      if (!debugLogEl) return;
+      const timestamp = new Date().toISOString();
+      debugLogEl.textContent += `[${timestamp}] ${message}\n`;
+    }
+
+    function clearDebug() {
+      if (debugLogEl) debugLogEl.textContent = '';
     }
 
     function parseExcelDate(val) {
@@ -574,6 +692,18 @@
       return String(header || '').trim().toLowerCase().replace(/\s+/g, ' ');
     }
 
+    function findHeaderRowIndex(rows) {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || !row.length) continue;
+        const normalized = row.map(normalizeHeader);
+        if (findHeaderIndex(normalized, ['date', 'data']) !== -1) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
     function findHeaderIndex(headers, targets) {
       if (!Array.isArray(headers)) return -1;
       for (let i = 0; i < headers.length; i++) {
@@ -589,9 +719,18 @@
       if (typeof value === 'number') {
         return Number.isFinite(value) ? value : null;
       }
-      const normalized = String(value).replace(/\s+/g, '').replace(',', '.');
+      let normalized = String(value).trim();
+      if (!normalized) return null;
+      let negative = false;
+      if (/^\(.*\)$/.test(normalized)) {
+        negative = true;
+        normalized = normalized.slice(1, -1);
+      }
+      normalized = normalized.replace(/\s+/g, '');
+      normalized = normalized.replace(/,/g, '');
       const num = Number(normalized);
-      return Number.isFinite(num) ? num : null;
+      if (!Number.isFinite(num)) return null;
+      return negative ? -num : num;
     }
 
     function calcularKPIs(records, totalSnapshots) {
