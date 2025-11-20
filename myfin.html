@@ -124,6 +124,50 @@
     .trend-down {
       color: #d93025;
     }
+    .hierarchy-table table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+    }
+    .hierarchy-table th,
+    .hierarchy-table td {
+      padding: 0.4rem 0.5rem;
+      border-bottom: 1px solid #e0e0e0;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .hierarchy-table th:first-child,
+    .hierarchy-table td:first-child {
+      text-align: left;
+    }
+    .hierarchy-row.year-row {
+      background: #f3f4f6;
+      font-weight: 600;
+    }
+    .hierarchy-row.month-row {
+      background: #fafafa;
+    }
+    .hierarchy-row .level-label {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .tree-toggle {
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 0.1rem;
+      display: inline-flex;
+      align-items: center;
+    }
+    .tree-toggle:focus-visible {
+      outline: 2px solid #1a73e8;
+    }
+    .level-label .indent {
+      display: inline-block;
+      width: 1rem;
+    }
   </style>
   <!-- SheetJS (XLSX) CDN -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -186,40 +230,29 @@
   </div>
 
   <div class="card">
-    <h2>KPIs by Period</h2>
-    <div class="tables-container">
-      <div>
-        <h3>By Week (ISO)</h3>
-        <p class="hint" id="weeklyFilterHint">Showing all weeks.</p>
-        <table id="weeklyTable">
-          <thead>
-            <tr>
-              <th>Week</th>
-              <th>Gain</th>
-              <th>Loss</th>
-              <th>Net</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div>
-        <h3>By Month</h3>
-        <p class="hint">Click a month to filter the weekly table.</p>
-        <table id="monthlyTable">
-          <thead>
-            <tr>
-              <th>Month</th>
-              <th>Gain</th>
-              <th>Loss</th>
-              <th>Net</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
+    <h2>Totals by Year / Month / Week / Day</h2>
+    <p class="hint">Expand rows to drill down through the timeline.</p>
+    <div class="hierarchy-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Period</th>
+            <th>Single</th>
+            <th>IRA</th>
+            <th>Trust Acct</th>
+            <th>Total</th>
+            <th>Diff</th>
+          </tr>
+        </thead>
+        <tbody id="hierarchyBody">
+          <tr>
+            <td colspan="6" class="table-empty">Awaiting data...</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </div>
+
 
   <div class="card">
     <h2>Detailed Entries</h2>
@@ -242,10 +275,8 @@
     const fileInput = document.getElementById('fileInput');
     const errorDiv = document.getElementById('error');
     const refreshBtn = document.getElementById('refreshBtn');
-    const weeklyFilterHint = document.getElementById('weeklyFilterHint');
-    const weeklyTableEl = document.getElementById('weeklyTable');
-    const monthlyTableEl = document.getElementById('monthlyTable');
     const debugLogEl = document.getElementById('debugLog');
+    const hierarchyBody = document.getElementById('hierarchyBody');
     const SHEET_URLS = [
       'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
       'https://cors.isomorphic-git.org/https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
@@ -257,15 +288,14 @@
       { key: 'ira', labels: ['ira'], display: 'IRA' },
       { key: 'trust', labels: ['trust acct', 'trust account', 'trust'], display: 'Trust Acct' }
     ];
-    let weeklyData = {};
-    let monthlyData = {};
-    let monthWeekMap = {};
-    let activeMonthFilter = null;
+    let hierarchyData = [];
+    const expandedYears = new Set();
+    const expandedMonths = new Set();
+    const expandedWeeks = new Set();
 
     refreshBtn?.addEventListener('click', loadGoogleSheet);
     fileInput?.addEventListener('change', handleLocalFile);
-    monthlyTableEl.addEventListener('click', handleMonthlyTableClick);
-    weeklyFilterHint.addEventListener('click', handleWeeklyFilterHintClick);
+    hierarchyBody?.addEventListener('click', handleHierarchyClick);
     loadGoogleSheet();
 
     async function loadGoogleSheet() {
@@ -608,6 +638,11 @@
       calcularKPIs(movements, records.length);
       atualizarInvestimentos(records, detectedInvestments);
       preencherSnapshots(records, detectedInvestments);
+      expandedYears.clear();
+      expandedMonths.clear();
+      expandedWeeks.clear();
+      hierarchyData = buildHierarchy(records);
+      renderHierarchy();
     }
 
     function showError(msg) {
@@ -703,51 +738,17 @@
       let totalLoss = 0;
       let net = 0;
 
-      const weekly = {};
-      const monthly = {};
-      const monthWeeks = {};
-
       for (const r of records) {
         const amount = r.amount;
         net += amount;
         if (amount > 0) totalGain += amount;
         if (amount < 0) totalLoss += amount;
-
-        const wKey = getISOWeekKey(r.date);
-        const mKey = getMonthKey(r.date);
-
-        if (!weekly[wKey]) weekly[wKey] = { gain: 0, loss: 0, net: 0 };
-        if (!monthly[mKey]) monthly[mKey] = { gain: 0, loss: 0, net: 0 };
-        if (!monthWeeks[mKey]) monthWeeks[mKey] = new Set();
-
-        if (amount > 0) {
-          weekly[wKey].gain += amount;
-          monthly[mKey].gain += amount;
-        } else if (amount < 0) {
-          weekly[wKey].loss += amount;
-          monthly[mKey].loss += amount;
-        }
-        weekly[wKey].net += amount;
-        monthly[mKey].net += amount;
-        monthWeeks[mKey].add(wKey);
       }
 
       document.getElementById('totalGain').textContent = formatUSD(totalGain);
       document.getElementById('totalLoss').textContent = formatUSD(totalLoss);
       document.getElementById('netResult').textContent = formatUSD(net);
       document.getElementById('countTx').textContent = totalSnapshots.toString();
-
-      weeklyData = weekly;
-      monthlyData = monthly;
-      monthWeekMap = Object.fromEntries(
-        Object.entries(monthWeeks).map(([key, set]) => [key, Array.from(set)])
-      );
-      if (activeMonthFilter && !monthWeekMap[activeMonthFilter]) {
-        activeMonthFilter = null;
-      }
-      renderWeeklyTable();
-      renderMonthlyTable();
-      updateWeeklyFilterHint();
     }
 
     function getISOWeekKey(date) {
@@ -760,100 +761,18 @@
       return `${year}-W${String(weekNo).padStart(2, '0')}`;
     }
 
+    function getISOWeekNumber(date) {
+      const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+      const dayNum = d.getUTCDay() || 7;
+      d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+      const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+      return Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+    }
+
     function getMonthKey(date) {
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, '0');
       return `${year}-${month}`;
-    }
-
-    function formatUSD(value) {
-      if (!Number.isFinite(value)) return '-';
-      return value.toLocaleString('en-US', {
-        style: 'currency',
-        currency: 'USD'
-      });
-    }
-
-    function renderWeeklyTable() {
-      if (!weeklyTableEl) return;
-      const tbody = weeklyTableEl.querySelector('tbody');
-      tbody.innerHTML = '';
-      const keys = Object.keys(weeklyData || {});
-      if (!keys.length) return;
-
-      keys.sort();
-      let filteredKeys = keys;
-      if (activeMonthFilter && monthWeekMap[activeMonthFilter]) {
-        const allowed = new Set(monthWeekMap[activeMonthFilter]);
-        filteredKeys = keys.filter(key => allowed.has(key));
-      }
-
-      if (!filteredKeys.length) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="4" class="table-empty">No weeks for selected month.</td>`;
-        tbody.appendChild(tr);
-        return;
-      }
-
-      for (const key of filteredKeys) {
-        const rowData = weeklyData[key];
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${key}</td>
-          <td>${formatUSD(rowData.gain)}</td>
-          <td>${formatUSD(rowData.loss)}</td>
-          <td>${formatUSD(rowData.net)}</td>
-        `;
-        tbody.appendChild(tr);
-      }
-    }
-
-    function renderMonthlyTable() {
-      if (!monthlyTableEl) return;
-      const tbody = monthlyTableEl.querySelector('tbody');
-      tbody.innerHTML = '';
-      const keys = Object.keys(monthlyData || {});
-      if (!keys.length) return;
-
-      keys.sort();
-      for (const key of keys) {
-        const rowData = monthlyData[key];
-        const tr = document.createElement('tr');
-        if (activeMonthFilter === key) {
-          tr.classList.add('is-filtered');
-        }
-        const labelCell = document.createElement('td');
-        if (monthWeekMap[key] && monthWeekMap[key].length) {
-          labelCell.innerHTML = `<button type="button" class="link-button" data-month="${key}">${formatMonthKey(key)}</button>`;
-        } else {
-          labelCell.textContent = formatMonthKey(key);
-        }
-        tr.appendChild(labelCell);
-
-        const gainTd = document.createElement('td');
-        gainTd.textContent = formatUSD(rowData.gain);
-        tr.appendChild(gainTd);
-
-        const lossTd = document.createElement('td');
-        lossTd.textContent = formatUSD(rowData.loss);
-        tr.appendChild(lossTd);
-
-        const netTd = document.createElement('td');
-        netTd.textContent = formatUSD(rowData.net);
-        tr.appendChild(netTd);
-
-        tbody.appendChild(tr);
-      }
-    }
-
-    function updateWeeklyFilterHint() {
-      if (!weeklyFilterHint) return;
-      if (activeMonthFilter && monthWeekMap[activeMonthFilter]?.length) {
-        const label = formatMonthKey(activeMonthFilter);
-        weeklyFilterHint.innerHTML = `Showing weeks for <strong>${label}</strong>. <button type="button" class="link-button" data-action="clear-week-filter">Show all weeks</button>`;
-      } else {
-        weeklyFilterHint.textContent = 'Showing all weeks.';
-      }
     }
 
     function formatMonthKey(key) {
@@ -864,23 +783,12 @@
       return `${labelMonth}/${y}`;
     }
 
-    function handleMonthlyTableClick(event) {
-      const button = event.target.closest('button[data-month]');
-      if (!button) return;
-      const monthKey = button.getAttribute('data-month');
-      activeMonthFilter = activeMonthFilter === monthKey ? null : monthKey;
-      renderWeeklyTable();
-      renderMonthlyTable();
-      updateWeeklyFilterHint();
-    }
-
-    function handleWeeklyFilterHintClick(event) {
-      const actionBtn = event.target.closest('[data-action="clear-week-filter"]');
-      if (!actionBtn) return;
-      activeMonthFilter = null;
-      renderWeeklyTable();
-      renderMonthlyTable();
-      updateWeeklyFilterHint();
+    function formatUSD(value) {
+      if (!Number.isFinite(value)) return '-';
+      return value.toLocaleString('en-US', {
+        style: 'currency',
+        currency: 'USD'
+      });
     }
 
     function atualizarInvestimentos(records, investments) {
@@ -1008,6 +916,237 @@
     function formatDateLabel(date) {
       if (!(date instanceof Date) || isNaN(date.getTime())) return '-';
       return date.toLocaleDateString('en-US');
+    }
+
+    function buildHierarchy(records) {
+      const yearMap = new Map();
+      for (const rec of records) {
+        const year = rec.date.getFullYear();
+        const monthIndex = rec.date.getMonth();
+        const dayLabel = rec.date.getDate().toString().padStart(2, '0');
+        if (!yearMap.has(year)) {
+          yearMap.set(year, {
+            key: String(year),
+            label: String(year),
+            diff: 0,
+            months: [],
+            monthMap: new Map(),
+            lastRecord: null
+          });
+        }
+        const yearNode = yearMap.get(year);
+        yearNode.diff += rec.diff;
+        yearNode.lastRecord = rec;
+
+        const monthKey = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+        if (!yearNode.monthMap.has(monthKey)) {
+          yearNode.monthMap.set(monthKey, {
+            key: monthKey,
+            label: formatMonthKey(`${year}-${String(monthIndex + 1).padStart(2, '0')}`),
+            diff: 0,
+            days: [],
+            lastRecord: null
+          });
+        }
+          const monthNode = yearNode.monthMap.get(monthKey);
+        monthNode.diff += rec.diff;
+        monthNode.lastRecord = rec;
+        if (!monthNode.weeks) {
+          monthNode.weeks = new Map();
+        }
+        const weekKey = `${monthKey}-W${getISOWeekNumber(rec.date)}`;
+        if (!monthNode.weeks.has(weekKey)) {
+          monthNode.weeks.set(weekKey, {
+            key: weekKey,
+            label: `Week ${getISOWeekNumber(rec.date)}`,
+            diff: 0,
+            days: [],
+            lastRecord: null
+          });
+        }
+        const weekNode = monthNode.weeks.get(weekKey);
+        weekNode.diff += rec.diff;
+        weekNode.lastRecord = rec;
+        weekNode.days.push({
+          key: `${weekKey}-${dayLabel}`,
+          label: `${dayLabel}/${String(monthIndex + 1).padStart(2, '0')}`,
+          single: rec.single,
+          ira: rec.ira,
+          trust: rec.trust,
+          total: rec.total,
+          diff: rec.diff
+        });
+      }
+
+      const years = [];
+      for (const yearNode of yearMap.values()) {
+        yearNode.months = Array.from(yearNode.monthMap.values()).sort((a, b) => (a.key > b.key ? 1 : -1));
+        yearNode.single = yearNode.lastRecord?.single ?? 0;
+        yearNode.ira = yearNode.lastRecord?.ira ?? 0;
+        yearNode.trust = yearNode.lastRecord?.trust ?? 0;
+        yearNode.total = yearNode.lastRecord?.total ?? 0;
+        for (const month of yearNode.months) {
+          const monthWeeks = Array.from(month.weeks.values()).sort((a, b) => (a.key > b.key ? 1 : -1));
+          month.weekList = monthWeeks;
+          month.single = month.lastRecord?.single ?? 0;
+          month.ira = month.lastRecord?.ira ?? 0;
+          month.trust = month.lastRecord?.trust ?? 0;
+          month.total = month.lastRecord?.total ?? 0;
+          for (const week of monthWeeks) {
+            week.single = week.lastRecord?.single ?? 0;
+            week.ira = week.lastRecord?.ira ?? 0;
+            week.trust = week.lastRecord?.trust ?? 0;
+            week.total = week.lastRecord?.total ?? 0;
+          }
+          delete month.weeks;
+          delete month.lastRecord;
+        }
+        delete yearNode.monthMap;
+        delete yearNode.lastRecord;
+        delete yearNode.monthMap;
+        delete yearNode.lastRecord;
+        years.push(yearNode);
+      }
+      return years.sort((a, b) => b.key.localeCompare(a.key));
+    }
+
+    function renderHierarchy() {
+      if (!hierarchyBody) return;
+      hierarchyBody.innerHTML = '';
+      if (!hierarchyData.length) {
+        hierarchyBody.innerHTML = `<tr><td colspan="6" class="table-empty">No data</td></tr>`;
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+      for (const year of hierarchyData) {
+        const yearRow = document.createElement('tr');
+        yearRow.className = 'hierarchy-row year-row';
+        const expanded = expandedYears.has(year.key);
+        yearRow.innerHTML = `
+          <td>
+            <div class="level-label">
+              ${year.months.length ? `<button class="tree-toggle" data-year="${year.key}" aria-label="Toggle year">${expanded ? '▾' : '▸'}</button>` : '<span class="indent"></span>'}
+              ${year.label}
+            </div>
+          </td>
+          <td>${formatUSD(year.single)}</td>
+          <td>${formatUSD(year.ira)}</td>
+          <td>${formatUSD(year.trust)}</td>
+          <td>${formatUSD(year.total)}</td>
+          <td class="${year.diff > 0 ? 'kpi-positive' : year.diff < 0 ? 'kpi-negative' : 'kpi-neutral'}">${formatUSD(year.diff)}</td>
+        `;
+        fragment.appendChild(yearRow);
+
+        if (expanded) {
+          for (const month of year.months) {
+            const monthRow = document.createElement('tr');
+            monthRow.className = 'hierarchy-row month-row';
+            const monthExpanded = expandedMonths.has(month.key);
+            monthRow.innerHTML = `
+              <td>
+                <div class="level-label">
+                  <span class="indent"></span>
+                  ${month.weekList.length ? `<button class="tree-toggle" data-month="${month.key}" aria-label="Toggle month">${monthExpanded ? '▾' : '▸'}</button>` : '<span class="indent"></span>'}
+                  ${month.label}
+                </div>
+              </td>
+              <td>${formatUSD(month.single)}</td>
+              <td>${formatUSD(month.ira)}</td>
+              <td>${formatUSD(month.trust)}</td>
+              <td>${formatUSD(month.total)}</td>
+              <td class="${month.diff > 0 ? 'kpi-positive' : month.diff < 0 ? 'kpi-negative' : 'kpi-neutral'}">${formatUSD(month.diff)}</td>
+            `;
+            fragment.appendChild(monthRow);
+
+            if (monthExpanded) {
+              for (const week of month.weekList) {
+                const weekRow = document.createElement('tr');
+                weekRow.className = 'hierarchy-row';
+                const weekExpanded = expandedWeeks.has(week.key);
+                weekRow.innerHTML = `
+                  <td>
+                    <div class="level-label">
+                      <span class="indent"></span>
+                      <span class="indent"></span>
+                      ${week.days.length ? `<button class="tree-toggle" data-week="${week.key}" aria-label="Toggle week">${weekExpanded ? '▾' : '▸'}</button>` : '<span class="indent"></span>'}
+                      ${week.label}
+                    </div>
+                  </td>
+                  <td>${formatUSD(week.single)}</td>
+                  <td>${formatUSD(week.ira)}</td>
+                  <td>${formatUSD(week.trust)}</td>
+                  <td>${formatUSD(week.total)}</td>
+                  <td class="${week.diff > 0 ? 'kpi-positive' : week.diff < 0 ? 'kpi-negative' : 'kpi-neutral'}">${formatUSD(week.diff)}</td>
+                `;
+                fragment.appendChild(weekRow);
+
+                if (weekExpanded) {
+                  for (const day of week.days) {
+                    const dayRow = document.createElement('tr');
+                    dayRow.className = 'hierarchy-row';
+                    dayRow.innerHTML = `
+                      <td>
+                        <div class="level-label">
+                          <span class="indent"></span>
+                          <span class="indent"></span>
+                          <span class="indent"></span>
+                          ${day.label}
+                        </div>
+                      </td>
+                      <td>${formatUSD(day.single)}</td>
+                      <td>${formatUSD(day.ira)}</td>
+                      <td>${formatUSD(day.trust)}</td>
+                      <td>${formatUSD(day.total)}</td>
+                      <td class="${day.diff > 0 ? 'kpi-positive' : day.diff < 0 ? 'kpi-negative' : 'kpi-neutral'}">${formatUSD(day.diff)}</td>
+                    `;
+                    fragment.appendChild(dayRow);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      hierarchyBody.appendChild(fragment);
+    }
+
+    function handleHierarchyClick(event) {
+      const yearBtn = event.target.closest('[data-year]');
+      if (yearBtn) {
+        const key = yearBtn.getAttribute('data-year');
+        if (expandedYears.has(key)) {
+          expandedYears.delete(key);
+        } else {
+          expandedYears.add(key);
+        }
+        renderHierarchy();
+        return;
+      }
+
+      const monthBtn = event.target.closest('[data-month]');
+      if (monthBtn) {
+        const key = monthBtn.getAttribute('data-month');
+        if (expandedMonths.has(key)) {
+          expandedMonths.delete(key);
+        } else {
+          expandedMonths.add(key);
+        }
+        renderHierarchy();
+        return;
+      }
+
+      const weekBtn = event.target.closest('[data-week]');
+      if (weekBtn) {
+        const key = weekBtn.getAttribute('data-week');
+        if (expandedWeeks.has(key)) {
+          expandedWeeks.delete(key);
+        } else {
+          expandedWeeks.add(key);
+        }
+        renderHierarchy();
+      }
     }
   </script>
 </body>
