@@ -60,7 +60,6 @@
       margin-top: 0.5rem;
       font-size: 0.9rem;
     }
-
     table {
       width: 100%;
       border-collapse: collapse;
@@ -168,6 +167,47 @@
       display: inline-block;
       width: 1rem;
     }
+    .crud-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .crud-form label {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+      color: #555;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+    .crud-form input {
+      padding: 0.4rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font: inherit;
+    }
+    .crud-actions {
+      margin-bottom: 0.5rem;
+    }
+    #crudTable {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    #crudTable th,
+    #crudTable td {
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid #e0e0e0;
+      text-align: right;
+    }
+    #crudTable th:first-child,
+    #crudTable td:first-child {
+      text-align: left;
+    }
+    .crud-table-actions button {
+      margin-right: 0.3rem;
+    }
   </style>
   <!-- SheetJS (XLSX) CDN -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -253,21 +293,47 @@
     </div>
   </div>
 
-
   <div class="card">
-    <h2>Detailed Entries</h2>
-    <table id="snapshotsTable">
+    <h2>Manage Entries Locally</h2>
+    <p class="hint">Edits here are local; after adjusting, export the CSV and update your Google Sheet.</p>
+    <form id="entryForm" class="crud-form">
+      <label>Date
+        <input type="date" id="formDate" required />
+      </label>
+      <label>Single
+        <input type="text" inputmode="decimal" id="formSingle" required />
+      </label>
+      <label>IRA
+        <input type="text" inputmode="decimal" id="formIRA" required />
+      </label>
+      <label>Trust Acct
+        <input type="text" inputmode="decimal" id="formTrust" required />
+      </label>
+      <div style="display:flex;align-items:center;gap:0.5rem;">
+        <button type="submit" id="submitEntryBtn">Add entry</button>
+        <button type="button" id="cancelEditBtn" class="link-button" style="padding:0;">Cancel edit</button>
+      </div>
+    </form>
+    <div class="crud-actions">
+      <button id="downloadCsvBtn">Download updated CSV</button>
+    </div>
+    <table id="crudTable">
       <thead>
         <tr>
           <th>Date</th>
           <th>Single</th>
           <th>IRA</th>
-          <th>Trust Acct</th>
+          <th>Trust</th>
           <th>Total</th>
           <th>Diff</th>
+          <th>Actions</th>
         </tr>
       </thead>
-      <tbody></tbody>
+      <tbody>
+        <tr>
+          <td colspan="7" class="table-empty">Load data to begin editing.</td>
+        </tr>
+      </tbody>
     </table>
   </div>
 
@@ -277,25 +343,44 @@
     const refreshBtn = document.getElementById('refreshBtn');
     const debugLogEl = document.getElementById('debugLog');
     const hierarchyBody = document.getElementById('hierarchyBody');
+    const entryForm = document.getElementById('entryForm');
+    const submitEntryBtn = document.getElementById('submitEntryBtn');
+    const cancelEditBtn = document.getElementById('cancelEditBtn');
+    const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+    const crudTableBody = document.querySelector('#crudTable tbody');
+    const formDate = document.getElementById('formDate');
+    const formSingle = document.getElementById('formSingle');
+    const formIRA = document.getElementById('formIRA');
+    const formTrust = document.getElementById('formTrust');
     const SHEET_URLS = [
       'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
       'https://cors.isomorphic-git.org/https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
       'https://r.jina.ai/https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv'
     ];
     const SHEET_GVIZ_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/gviz/tq?gid=0&headers=1';
+    const GOOGLE_SCRIPT_ENDPOINT = 'https://script.google.com/macros/s/AKfycbztZXV8nPICz9kekS8YIu3ytmdi_jhyJKna5h_E0rXKgDitS8Lca4AgmxxnXkibw_sw/exec';
+    const GOOGLE_SCRIPT_TOKEN = 'zYK492Vp6zanaMEAHQ6dlEZLHnVtEO7cQV9jjE';
     const investmentDefinitions = [
       { key: 'single', labels: ['single'], display: 'Single' },
       { key: 'ira', labels: ['ira'], display: 'IRA' },
       { key: 'trust', labels: ['trust acct', 'trust account', 'trust'], display: 'Trust Acct' }
     ];
     let hierarchyData = [];
+    let currentRecords = [];
+    let currentInvestments = investmentDefinitions.map(def => ({ key: def.key, display: def.display }));
     const expandedYears = new Set();
     const expandedMonths = new Set();
     const expandedWeeks = new Set();
+    let editingRecordIndex = null;
 
     refreshBtn?.addEventListener('click', loadGoogleSheet);
     fileInput?.addEventListener('change', handleLocalFile);
     hierarchyBody?.addEventListener('click', handleHierarchyClick);
+    entryForm?.addEventListener('submit', handleEntrySubmit);
+    cancelEditBtn?.addEventListener('click', resetFormState);
+    downloadCsvBtn?.addEventListener('click', handleDownloadCsv);
+    crudTableBody?.addEventListener('click', handleCrudTableClick);
+    [formSingle, formIRA, formTrust].forEach(input => attachCurrencyMask(input));
     loadGoogleSheet();
 
     async function loadGoogleSheet() {
@@ -594,16 +679,20 @@
 
         const record = { date };
         let hasValue = false;
+        let hasZeroValue = false;
 
         for (const col of detectedInvestments) {
           const val = toNumber(row[col.idx]);
           record[col.key] = val;
           if (Number.isFinite(val)) {
             hasValue = true;
+            if (val === 0) {
+              hasZeroValue = true;
+            }
           }
         }
 
-        if (!hasValue) continue;
+        if (!hasValue || hasZeroValue) continue;
 
         records.push(record);
       }
@@ -614,13 +703,39 @@
       }
       logDebug(`Built ${records.length} normalized records.`);
 
-      records.sort((a, b) => a.date - b.date);
+      currentInvestments = detectedInvestments.length
+        ? detectedInvestments.map(({ key, display }) => ({ key, display }))
+        : investmentDefinitions.map(def => ({ key: def.key, display: def.display }));
+      applyRecords(records);
+    }
+
+    function applyRecords(records) {
+      const normalized = records
+        .map(rec => ({
+          date: rec.date instanceof Date ? new Date(rec.date) : parseExcelDate(rec.date),
+          single: parseCurrencyToNumber(rec.single),
+          ira: parseCurrencyToNumber(rec.ira),
+          trust: parseCurrencyToNumber(rec.trust)
+        }))
+        .filter(rec => {
+          if (!rec.date || isNaN(rec.date.getTime())) return false;
+          const hasZeroValue = ['single', 'ira', 'trust'].some(key => Number.isFinite(rec[key]) && rec[key] === 0);
+          return !hasZeroValue;
+        });
+
+      const uniqueByDate = new Map();
+      for (let i = normalized.length - 1; i >= 0; i--) {
+        const rec = normalized[i];
+        const key = formatDateForInput(rec.date);
+        if (!key || uniqueByDate.has(key)) continue;
+        uniqueByDate.set(key, rec);
+      }
+      const deduped = Array.from(uniqueByDate.values());
+
+      deduped.sort((a, b) => a.date - b.date);
       let previousTotal = null;
-      for (const rec of records) {
-        const computedTotal = detectedInvestments.reduce((sum, col) => {
-          const val = rec[col.key];
-          return sum + (Number.isFinite(val) ? val : 0);
-        }, 0);
+      for (const rec of deduped) {
+        const computedTotal = ['single', 'ira', 'trust'].reduce((sum, key) => sum + (Number.isFinite(rec[key]) ? rec[key] : 0), 0);
         rec.total = computedTotal;
         if (previousTotal == null) {
           rec.diff = 0;
@@ -630,19 +745,21 @@
         previousTotal = computedTotal;
       }
 
-      const movements = records.map(rec => ({
+      currentRecords = deduped.map(rec => ({ ...rec }));
+      const movements = deduped.map(rec => ({
         date: rec.date,
         amount: Number.isFinite(rec.diff) ? rec.diff : 0
       }));
 
-      calcularKPIs(movements, records.length);
-      atualizarInvestimentos(records, detectedInvestments);
-      preencherSnapshots(records, detectedInvestments);
+      calcularKPIs(movements, deduped.length);
+      atualizarInvestimentos(deduped, currentInvestments);
       expandedYears.clear();
       expandedMonths.clear();
       expandedWeeks.clear();
-      hierarchyData = buildHierarchy(records);
+      hierarchyData = buildHierarchy(deduped);
       renderHierarchy();
+      renderCrudTable();
+      resetFormState();
     }
 
     function showError(msg) {
@@ -668,6 +785,12 @@
       if (typeof val === 'string') {
         const trimmed = val.trim();
         if (!trimmed) return null;
+        const isoDateMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (isoDateMatch) {
+          const [, yearStr, monthStr, dayStr] = isoDateMatch;
+          const date = new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
+          return isNaN(date.getTime()) ? null : date;
+        }
         const tryNative = new Date(trimmed);
         if (!isNaN(tryNative.getTime())) {
           return tryNative;
@@ -791,6 +914,98 @@
       });
     }
 
+    function parseCurrencyToNumber(value) {
+      if (value === null || value === undefined || value === '') return null;
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+      }
+      let normalized = String(value).trim();
+      if (!normalized) return null;
+
+      let negative = false;
+      if (/^\(.*\)$/.test(normalized)) {
+        negative = true;
+        normalized = normalized.slice(1, -1);
+      }
+      if (normalized.includes('-')) {
+        negative = true;
+        normalized = normalized.replace(/-/g, '');
+      }
+
+      normalized = normalized.replace(/[^\d.,]/g, '');
+      if (!normalized) return null;
+
+      const lastDot = normalized.lastIndexOf('.');
+      const lastComma = normalized.lastIndexOf(',');
+      const dotDigits = lastDot !== -1 ? normalized.length - lastDot - 1 : 0;
+      const commaDigits = lastComma !== -1 ? normalized.length - lastComma - 1 : 0;
+      const dotIsDecimal = lastDot !== -1 && dotDigits > 0 && dotDigits <= 2;
+      const commaIsDecimal = lastComma !== -1 && commaDigits > 0 && commaDigits <= 2;
+
+      let decimalDigits = 0;
+      if (dotIsDecimal && (!commaIsDecimal || lastDot > lastComma)) {
+        decimalDigits = dotDigits;
+      } else if (commaIsDecimal) {
+        decimalDigits = commaDigits;
+      } else {
+        decimalDigits = 0;
+      }
+
+      const digitsOnly = normalized.replace(/[^0-9]/g, '');
+      if (!digitsOnly) return null;
+
+      let numericString = digitsOnly;
+      if (decimalDigits > 0) {
+        if (decimalDigits >= digitsOnly.length) {
+          numericString = `0.${digitsOnly.padStart(decimalDigits, '0')}`;
+        } else {
+          const splitIndex = digitsOnly.length - decimalDigits;
+          numericString = `${digitsOnly.slice(0, splitIndex)}.${digitsOnly.slice(splitIndex)}`;
+        }
+      }
+
+      const num = Number(numericString);
+      if (!Number.isFinite(num)) return null;
+      return negative ? -num : num;
+    }
+
+    function attachCurrencyMask(input) {
+      if (!input) return;
+
+      const sanitizeInput = () => {
+        const cleaned = input.value.replace(/[^\d.,\-()]/g, '');
+        if (cleaned !== input.value) {
+          input.value = cleaned;
+        }
+      };
+
+      const applyMask = () => {
+        const numericValue = parseCurrencyToNumber(input.value);
+        if (numericValue === null) {
+          delete input.dataset.rawValue;
+          input.value = '';
+          return;
+        }
+        input.dataset.rawValue = numericValue.toString();
+        input.value = formatUSD(numericValue);
+      };
+
+      input.addEventListener('input', sanitizeInput);
+      input.addEventListener('blur', applyMask);
+      input.addEventListener('change', applyMask);
+      input.addEventListener('focus', () => {
+        requestAnimationFrame(() => {
+          if (input.value) {
+            input.select();
+          }
+        });
+      });
+
+      if (input.value) {
+        applyMask();
+      }
+    }
+
     function atualizarInvestimentos(records, investments) {
       const grid = document.getElementById('investmentGrid');
       grid.innerHTML = '';
@@ -850,67 +1065,6 @@
       } else {
         grid.appendChild(fragment);
       }
-    }
-
-    function preencherSnapshots(records, investments) {
-      const table = document.getElementById('snapshotsTable');
-      const thead = table.querySelector('thead');
-      const tbody = table.querySelector('tbody');
-      tbody.innerHTML = '';
-
-      if (!records.length) {
-        thead.innerHTML = `
-          <tr>
-            <th>Date</th>
-            <th>Total</th>
-            <th>Diff</th>
-          </tr>
-        `;
-        return;
-      }
-
-      const headers = ['Date', ...investments.map(col => col.display), 'Total', 'Diff'];
-      thead.innerHTML = `<tr>${headers.map(title => `<th>${title}</th>`).join('')}</tr>`;
-
-      const fragment = document.createDocumentFragment();
-      let previousTotal = null;
-      for (const record of records) {
-        const tr = document.createElement('tr');
-        const dateTd = document.createElement('td');
-        dateTd.textContent = formatDateLabel(record.date);
-        tr.appendChild(dateTd);
-
-        for (const col of investments) {
-          const td = document.createElement('td');
-          td.textContent = formatUSD(record[col.key]);
-          tr.appendChild(td);
-        }
-
-        const totalTd = document.createElement('td');
-        totalTd.textContent = formatUSD(record.total);
-        if (Number.isFinite(previousTotal) && Number.isFinite(record.total)) {
-          if (record.total > previousTotal) {
-            totalTd.innerHTML += ` <span class="trend-icon trend-up">&uarr;</span>`;
-          } else if (record.total < previousTotal) {
-            totalTd.innerHTML += ` <span class="trend-icon trend-down">&darr;</span>`;
-          }
-        }
-        tr.appendChild(totalTd);
-
-        const diffTd = document.createElement('td');
-        diffTd.textContent = formatUSD(record.diff);
-        diffTd.className = Number.isFinite(record.diff)
-          ? (record.diff > 0 ? 'kpi-positive' : record.diff < 0 ? 'kpi-negative' : 'kpi-neutral')
-          : '';
-        tr.appendChild(diffTd);
-
-        fragment.appendChild(tr);
-        if (Number.isFinite(record.total)) {
-          previousTotal = record.total;
-        }
-      }
-
-      tbody.appendChild(fragment);
     }
 
     function formatDateLabel(date) {
@@ -1147,6 +1301,223 @@
         }
         renderHierarchy();
       }
+    }
+
+    async function handleEntrySubmit(event) {
+      event.preventDefault();
+      const baseRecord = {
+        date: parseExcelDate(formDate.value),
+        single: parseCurrencyToNumber(formSingle.value),
+        ira: parseCurrencyToNumber(formIRA.value),
+        trust: parseCurrencyToNumber(formTrust.value)
+      };
+      if (!baseRecord.date || isNaN(baseRecord.date.getTime())) {
+        showError('Invalid date for the new entry.');
+        return;
+      }
+      const dateKey = formatDateForInput(baseRecord.date);
+      if (!dateKey) {
+        showError('Invalid date for the new entry.');
+        return;
+      }
+      const duplicateIndex = currentRecords.findIndex(rec => formatDateForInput(rec.date) === dateKey);
+      if (duplicateIndex !== -1 && duplicateIndex !== editingRecordIndex) {
+        alert('Warning: There is already an entry for this date. Please edit the existing entry or choose another day.');
+        return;
+      }
+
+      let working = currentRecords.map(rec => ({ ...rec }));
+      if (editingRecordIndex !== null) {
+        working.splice(editingRecordIndex, 1);
+      }
+      working = working.filter(rec => formatDateForInput(rec.date) !== dateKey);
+      working.push(baseRecord);
+
+      try {
+        setSubmitButtonLoading(true);
+        await sendEntryToGoogleSheet(baseRecord, editingRecordIndex !== null ? 'update' : 'insert');
+        applyRecords(working);
+        logDebug(editingRecordIndex !== null ? 'Edited existing entry.' : 'Added new entry.');
+      } catch (err) {
+        console.error(err);
+        alert(`Failed to sync entry with Google Sheets: ${err.message || err}`);
+      } finally {
+        setSubmitButtonLoading(false);
+      }
+    }
+
+    function handleCrudTableClick(event) {
+      const button = event.target.closest('button[data-index]');
+      if (!button) return;
+      const index = Number(button.getAttribute('data-index'));
+      if (Number.isNaN(index)) return;
+      const action = button.getAttribute('data-action');
+      if (action === 'edit') {
+        startEditRecord(index);
+      } else if (action === 'delete') {
+        handleDeleteRecord(index);
+      }
+    }
+
+    function startEditRecord(index) {
+      const record = currentRecords[index];
+      if (!record) return;
+      editingRecordIndex = index;
+      formDate.value = formatDateForInput(record.date);
+        formSingle.value = formatUSD(record.single ?? 0);
+        formSingle.dataset.rawValue = (record.single ?? 0).toString();
+        formIRA.value = formatUSD(record.ira ?? 0);
+        formIRA.dataset.rawValue = (record.ira ?? 0).toString();
+        formTrust.value = formatUSD(record.trust ?? 0);
+        formTrust.dataset.rawValue = (record.trust ?? 0).toString();
+      submitEntryBtn.textContent = 'Update entry';
+    }
+
+    function resetFormState() {
+      editingRecordIndex = null;
+      if (entryForm) entryForm.reset();
+      [formSingle, formIRA, formTrust].forEach(input => {
+        if (input) {
+          delete input.dataset.rawValue;
+          input.value = '';
+        }
+      });
+      submitEntryBtn.textContent = 'Add entry';
+    }
+
+    async function handleDeleteRecord(index) {
+      const record = currentRecords[index];
+      if (!record) return;
+      const dateKey = formatDateForInput(record.date);
+      if (!dateKey) return;
+      const confirmDelete = window.confirm(`Delete entry dated ${dateKey}?`);
+      if (!confirmDelete) return;
+      try {
+        setSubmitButtonLoading(true, 'Deleting...');
+        await sendEntryToGoogleSheet(record, 'delete');
+        const updated = currentRecords.filter((_, i) => i !== index);
+        applyRecords(updated);
+        logDebug('Removed entry.');
+      } catch (err) {
+        console.error(err);
+        alert(`Failed to delete entry from Google Sheets: ${err.message || err}`);
+      } finally {
+        setSubmitButtonLoading(false);
+      }
+    }
+
+    function setSubmitButtonLoading(isLoading, label = 'Saving...') {
+      if (!submitEntryBtn) return;
+      if (isLoading) {
+        submitEntryBtn.dataset.prevLabel = submitEntryBtn.textContent;
+        submitEntryBtn.textContent = label;
+        submitEntryBtn.disabled = true;
+      } else {
+        if (submitEntryBtn.dataset.prevLabel) {
+          submitEntryBtn.textContent = submitEntryBtn.dataset.prevLabel;
+          delete submitEntryBtn.dataset.prevLabel;
+        }
+        submitEntryBtn.disabled = false;
+      }
+    }
+
+    async function sendEntryToGoogleSheet(record, action = 'insert') {
+      if (!GOOGLE_SCRIPT_ENDPOINT) {
+        throw new Error('Google Script endpoint is not configured.');
+      }
+      const displayDate = new Date(record.date).toLocaleDateString('en-US');
+      const payload = {
+        action,
+        dateISO: formatDateForInput(record.date),
+        dateDisplay: displayDate,
+        single: Number.isFinite(record.single) ? record.single : 0,
+        ira: Number.isFinite(record.ira) ? record.ira : 0,
+        trust: Number.isFinite(record.trust) ? record.trust : 0,
+        token: GOOGLE_SCRIPT_TOKEN
+      };
+      const response = await fetch(GOOGLE_SCRIPT_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (err) {
+        // Some deployments might not return JSON; ignore parsing errors if content empty
+      }
+      if (data && data.success === false) {
+        throw new Error(data.error || 'Unknown error from Google Script');
+      }
+      return data;
+    }
+
+    function handleDownloadCsv() {
+      if (!currentRecords.length) {
+        showError('No local data to export.');
+        return;
+      }
+      const header = ['Date', 'Single', 'IRA', 'Trust Acct'];
+      const rows = currentRecords.map(rec => [
+        formatDateForInput(rec.date),
+        (rec.single ?? 0).toString(),
+        (rec.ira ?? 0).toString(),
+        (rec.trust ?? 0).toString()
+      ]);
+      const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `finance-updated-${Date.now()}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      logDebug('CSV exported for manual upload.');
+    }
+
+    function renderCrudTable() {
+      if (!crudTableBody) return;
+      crudTableBody.innerHTML = '';
+      if (!currentRecords.length) {
+        crudTableBody.innerHTML = `<tr><td colspan="7" class="table-empty">No data loaded.</td></tr>`;
+        return;
+      }
+      const fragment = document.createDocumentFragment();
+      const sortedRecords = currentRecords
+        .map((rec, index) => ({ rec, index }))
+        .sort((a, b) => {
+          const timeA = a.rec.date instanceof Date ? a.rec.date.getTime() : 0;
+          const timeB = b.rec.date instanceof Date ? b.rec.date.getTime() : 0;
+          return timeB - timeA;
+        });
+      sortedRecords.forEach(({ rec, index }) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${formatDateLabel(rec.date)}</td>
+          <td>${formatUSD(rec.single)}</td>
+          <td>${formatUSD(rec.ira)}</td>
+          <td>${formatUSD(rec.trust)}</td>
+          <td>${formatUSD(rec.total)}</td>
+          <td class="${rec.diff > 0 ? 'kpi-positive' : rec.diff < 0 ? 'kpi-negative' : 'kpi-neutral'}">${formatUSD(rec.diff)}</td>
+          <td class="crud-table-actions">
+            <button data-action="edit" data-index="${index}">Edit</button>
+            <button data-action="delete" data-index="${index}">Delete</button>
+          </td>
+        `;
+        fragment.appendChild(tr);
+      });
+      crudTableBody.appendChild(fragment);
+    }
+
+    function formatDateForInput(date) {
+      if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     }
   </script>
 </body>
