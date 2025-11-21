@@ -208,20 +208,66 @@
     .crud-table-actions button {
       margin-right: 0.3rem;
     }
+    .chart-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin: 0.4rem auto 0.6rem;
+      justify-content: center;
+    }
+    .chart-controls button {
+      border: 1px solid #d0d7de;
+      background: #fff;
+      color: #1f2933;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: background 0.2s, color 0.2s;
+    }
+    .chart-controls button.active {
+      background: #1a73e8;
+      color: #fff;
+      border-color: #1a73e8;
+    }
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1rem;
+      font-size: 0.85rem;
+      color: #1f2933;
+      margin-bottom: 0.8rem;
+    }
+    .chart-legend .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    .chart-legend .legend-swatch {
+      width: 18px;
+      height: 3px;
+      border-radius: 999px;
+      display: inline-block;
+    }
+    #trendChart {
+      width: 100%;
+      display: block;
+    }
   </style>
   <!-- SheetJS (XLSX) CDN -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-  <h1>Financial KPIs from XLSX</h1>
+  <h1>Loba's Finances</h1>
 
   <div class="card">
     <p><strong>Step 1:</strong> Load the published Google Sheets data.</p>
     <p class="hint">
-      The sheet should contain the columns <code>Date</code>, <code>Single</code>, <code>IRA</code>, and <code>Trust Acct</code> in the first row.
+      <!-- The sheet should contain the columns <code>Date</code>, <code>Single</code>, <code>IRA</code>, and <code>Trust Acct</code> in the first row.
       <br />
       The app uses public proxies so you can open it directly on mobile (no local server required).
-      <br />
+      <br /> -->
       If the online fetch fails, upload the <code>.xlsx</code> or <code>.csv</code> file below.
     </p>
     <button id="refreshBtn" class="link-button" style="font-size:1rem;">↻ Refresh from Google Sheets</button>
@@ -317,6 +363,7 @@
     <div class="crud-actions">
       <button id="downloadCsvBtn">Download updated CSV</button>
     </div>
+    <button type="button" id="toggleEntriesBtn" class="link-button" style="display:none;margin-bottom:0.4rem;">Show more ▾</button>
     <table id="crudTable">
       <thead>
         <tr>
@@ -337,6 +384,24 @@
     </table>
   </div>
 
+  <div class="card">
+    <h2>Monthly Trend</h2>
+    <p class="hint">Track how the consolidated total evolved over time.</p>
+    <div class="chart-controls" id="chartFilters">
+      <button type="button" data-range="1m">1M</button>
+      <button type="button" data-range="3m">3M</button>
+      <button type="button" data-range="6m">6M</button>
+      <button type="button" data-range="1y">1Y</button>
+      <button type="button" data-range="ytd">This Year</button>
+      <button type="button" data-range="all" class="active">All</button>
+    </div>
+    <div class="chart-legend" id="chartLegend"></div>
+    <div class="chart-wrapper" style="position:relative;">
+      <canvas id="trendChart" height="320"></canvas>
+      <div id="chartTooltip" style="position:absolute;pointer-events:none;background:#111827;color:#fff;padding:0.5rem 0.75rem;font-size:0.85rem;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);opacity:0;transition:opacity 0.15s;"></div>
+    </div>
+  </div>
+
   <script>
     const fileInput = document.getElementById('fileInput');
     const errorDiv = document.getElementById('error');
@@ -348,10 +413,15 @@
     const cancelEditBtn = document.getElementById('cancelEditBtn');
     const downloadCsvBtn = document.getElementById('downloadCsvBtn');
     const crudTableBody = document.querySelector('#crudTable tbody');
+    const toggleEntriesBtn = document.getElementById('toggleEntriesBtn');
     const formDate = document.getElementById('formDate');
     const formSingle = document.getElementById('formSingle');
     const formIRA = document.getElementById('formIRA');
     const formTrust = document.getElementById('formTrust');
+    const chartCanvas = document.getElementById('trendChart');
+    const chartFilters = document.getElementById('chartFilters');
+    const chartLegend = document.getElementById('chartLegend');
+    const chartTooltip = document.getElementById('chartTooltip');
     const SHEET_URLS = [
       'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
       'https://cors.isomorphic-git.org/https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3AvzjoSaklTNllWooFtOT8TWNA0LA_L_-5eRGvYSbGnNgO2E4qLCNJwUtlY77u-ZNyuSyYsGi6T0x/pub?gid=0&single=true&output=csv',
@@ -372,6 +442,20 @@
     const expandedMonths = new Set();
     const expandedWeeks = new Set();
     let editingRecordIndex = null;
+    let monthlySeries = [];
+    let currentChartRange = 'all';
+    const MAX_CRUD_VISIBLE_ROWS = 5;
+    let showAllCrudRows = false;
+    const metricConfigs = [
+      { key: 'single', label: 'Single', color: '#1a73e8', lineWidth: 2 },
+      { key: 'ira', label: 'IRA', color: '#f97316', lineWidth: 2 },
+      { key: 'trust', label: 'Trust', color: '#16a34a', lineWidth: 2 },
+      { key: 'total', label: 'Total', color: '#111827', lineWidth: 3.5 }
+    ];
+
+    if (toggleEntriesBtn) {
+      toggleEntriesBtn.setAttribute('aria-controls', 'crudTable');
+    }
 
     refreshBtn?.addEventListener('click', loadGoogleSheet);
     fileInput?.addEventListener('change', handleLocalFile);
@@ -380,8 +464,18 @@
     cancelEditBtn?.addEventListener('click', resetFormState);
     downloadCsvBtn?.addEventListener('click', handleDownloadCsv);
     crudTableBody?.addEventListener('click', handleCrudTableClick);
+    toggleEntriesBtn?.addEventListener('click', () => {
+      showAllCrudRows = !showAllCrudRows;
+      renderCrudTable();
+    });
+    chartFilters?.addEventListener('click', handleChartFilterClick);
     [formSingle, formIRA, formTrust].forEach(input => attachCurrencyMask(input));
     loadGoogleSheet();
+    window.addEventListener('resize', () => renderTrendChart());
+    chartCanvas?.addEventListener('mousemove', handleChartMouseMove);
+    chartCanvas?.addEventListener('mouseleave', () => hideTooltip());
+    currentChartRange = chartFilters?.querySelector('.active')?.dataset.range || 'all';
+    renderChartLegend();
 
     async function loadGoogleSheet() {
       clearDebug();
@@ -753,6 +847,8 @@
 
       calcularKPIs(movements, deduped.length);
       atualizarInvestimentos(deduped, currentInvestments);
+      monthlySeries = buildMonthlySeries(deduped);
+      renderTrendChart();
       expandedYears.clear();
       expandedMonths.clear();
       expandedWeeks.clear();
@@ -1065,6 +1161,250 @@
       } else {
         grid.appendChild(fragment);
       }
+    }
+
+    function buildMonthlySeries(records) {
+      const map = new Map();
+      for (const rec of records) {
+        if (!(rec.date instanceof Date) || isNaN(rec.date.getTime())) continue;
+        const key = `${rec.date.getFullYear()}-${String(rec.date.getMonth() + 1).padStart(2, '0')}`;
+        const existing = map.get(key);
+        if (!existing || rec.date > existing.date) {
+          map.set(key, {
+            key,
+            date: new Date(rec.date),
+            label: rec.date.toLocaleString('en-US', { month: 'short', year: 'numeric' }),
+            single: Number.isFinite(rec.single) ? rec.single : null,
+            ira: Number.isFinite(rec.ira) ? rec.ira : null,
+            trust: Number.isFinite(rec.trust) ? rec.trust : null,
+            total: Number.isFinite(rec.total) ? rec.total : null
+          });
+        }
+      }
+      return Array.from(map.values()).sort((a, b) => a.date - b.date);
+    }
+
+    function renderChartLegend() {
+      if (!chartLegend) return;
+      chartLegend.innerHTML = metricConfigs.map(cfg => `
+        <span class="legend-item">
+          <span class="legend-swatch" style="background:${cfg.color};height:${cfg.lineWidth + 1}px;"></span>
+          ${cfg.label}
+        </span>
+      `).join('');
+    }
+
+    function handleChartFilterClick(event) {
+      const button = event.target.closest('button[data-range]');
+      if (!button) return;
+      currentChartRange = button.dataset.range || 'all';
+      if (chartFilters) {
+        chartFilters.querySelectorAll('button').forEach(btn => {
+          btn.classList.toggle('active', btn === button);
+        });
+      }
+      renderTrendChart();
+    }
+
+    function monthDiff(start, end) {
+      if (!(start instanceof Date) || !(end instanceof Date)) return 0;
+      return (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+    }
+
+    function getFilteredSeries(range) {
+      if (!monthlySeries.length) return [];
+      const latest = monthlySeries[monthlySeries.length - 1].date;
+      if (!latest) return monthlySeries.slice();
+      if (range === 'ytd') {
+        const targetYear = latest.getFullYear();
+        return monthlySeries.filter(item => item.date.getFullYear() === targetYear);
+      }
+      if (range === 'all') return monthlySeries.slice();
+      const windowMap = { '1m': 1, '3m': 3, '6m': 6, '1y': 12 };
+      const months = windowMap[range];
+      if (!months) return monthlySeries.slice();
+      return monthlySeries.filter(item => monthDiff(item.date, latest) < months);
+    }
+
+    function renderTrendChart() {
+      if (!chartCanvas || !chartCanvas.getContext) return;
+      const ctx = chartCanvas.getContext('2d');
+      const series = getFilteredSeries(currentChartRange);
+      const width = chartCanvas.clientWidth || 600;
+      const height = chartCanvas.height || 260;
+      chartCanvas.width = width;
+      chartCanvas.height = height;
+      ctx.clearRect(0, 0, width, height);
+
+      if (!series.length) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        ctx.fillText('No data to plot.', 16, height / 2);
+        return;
+      }
+
+      const padding = { top: 20, right: 20, bottom: 40, left: 60 };
+      const values = [];
+      series.forEach(point => {
+        metricConfigs.forEach(cfg => {
+          const val = point[cfg.key];
+          if (Number.isFinite(val)) values.push(val);
+        });
+      });
+      if (!values.length) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        ctx.fillText('No data to plot.', 16, height / 2);
+        return;
+      }
+      const minValue = Math.min(...values);
+      const maxValue = Math.max(...values);
+      const range = maxValue - minValue || 1;
+
+      const basePlotWidth = width - padding.left - padding.right;
+      const plotHeight = height - padding.top - padding.bottom;
+      // Reserve horizontal breathing room so the last tooltip isn't clipped.
+      const desiredRightGap = 60;
+      const maxGapAllowed = Math.max(basePlotWidth - 20, 0);
+      const extraRightGap = Math.min(desiredRightGap, maxGapAllowed);
+      const usablePlotWidth = Math.max(basePlotWidth - extraRightGap, 0);
+      const centeredWidth = Math.max(basePlotWidth, 0);
+
+      const xPos = (index) => {
+        if (series.length === 1) return padding.left + centeredWidth / 2;
+        if (usablePlotWidth <= 0) return padding.left;
+        return padding.left + (index / (series.length - 1)) * usablePlotWidth;
+      };
+      const yPos = (value) => padding.top + (maxValue - value) / range * plotHeight;
+
+      ctx.strokeStyle = '#d0d7de';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, padding.top);
+      ctx.lineTo(padding.left, height - padding.bottom);
+      ctx.lineTo(width - padding.right, height - padding.bottom);
+      ctx.stroke();
+
+      const ticks = 4;
+      ctx.fillStyle = '#4b5563';
+      ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      for (let i = 0; i <= ticks; i++) {
+        const value = minValue + (range / ticks) * i;
+        const y = yPos(value);
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(width - padding.right, y);
+        ctx.stroke();
+        ctx.fillStyle = '#4b5563';
+        ctx.fillText(formatUSD(value), 8, y + 4);
+      }
+
+      metricConfigs.forEach(cfg => {
+        ctx.strokeStyle = cfg.color;
+        ctx.lineWidth = cfg.lineWidth;
+        ctx.beginPath();
+        let started = false;
+        series.forEach((point, index) => {
+          const val = point[cfg.key];
+          if (!Number.isFinite(val)) {
+            started = false;
+            return;
+          }
+          const x = xPos(index);
+          const y = yPos(val);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+      });
+
+      metricConfigs.forEach(cfg => {
+        ctx.fillStyle = cfg.color;
+        series.forEach((point, index) => {
+          const val = point[cfg.key];
+          if (!Number.isFinite(val)) return;
+          const x = xPos(index);
+          const y = yPos(val);
+          ctx.beginPath();
+          ctx.arc(x, y, cfg.lineWidth + 1, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      });
+
+      series.forEach((point, index) => {
+        const x = xPos(index);
+        ctx.fillStyle = '#374151';
+        ctx.save();
+        ctx.translate(x, height - padding.bottom + 15);
+        ctx.rotate(-Math.PI / 12);
+        ctx.fillText(point.label, -20, 0);
+        ctx.restore();
+      });
+      pointTargets = {
+        radius: 8,
+        points: series.map((point, index) => ({
+          x: xPos(index),
+          y: metricConfigs.map(cfg => Number.isFinite(point[cfg.key]) ? yPos(point[cfg.key]) : null),
+          data: point
+        }))
+      };
+    }
+
+    let pointTargets = { radius: 8, points: [] };
+
+    function handleChartMouseMove(event) {
+      if (!chartCanvas || !pointTargets.points.length) return;
+      const rect = chartCanvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const radius = pointTargets.radius;
+      let hovered = null;
+      pointTargets.points.forEach(point => {
+        point.y.forEach((yVal, idx) => {
+          if (!Number.isFinite(yVal)) return;
+          const dx = x - point.x;
+          const dy = y - yVal;
+          if (Math.sqrt(dx * dx + dy * dy) <= radius) {
+            hovered = { point, metricIndex: idx };
+          }
+        });
+      });
+      if (!hovered) {
+        hideTooltip();
+        return;
+      }
+      showTooltip(event.clientX, event.clientY, hovered.point.data);
+    }
+
+    function showTooltip(clientX, clientY, dataPoint) {
+      if (!chartTooltip) return;
+      const tooltipContent = `
+        <div style="font-weight:600;margin-bottom:0.25rem;">${dataPoint.label}</div>
+        ${metricConfigs.map(cfg => Number.isFinite(dataPoint[cfg.key])
+          ? `<div><span style="color:${cfg.key === 'total' ? '#ffffff' : cfg.color};font-weight:600;">${cfg.label}:</span> ${formatUSD(dataPoint[cfg.key])}</div>`
+          : ''
+        ).join('')}
+      `;
+      chartTooltip.innerHTML = tooltipContent;
+      chartTooltip.style.opacity = '1';
+      const wrapperRect = chartCanvas.parentElement?.getBoundingClientRect();
+      const tooltipRect = chartTooltip.getBoundingClientRect();
+      const offsetX = 12;
+      const offsetY = 12;
+      const left = wrapperRect ? clientX - wrapperRect.left + offsetX : clientX + offsetX;
+      const top = wrapperRect ? clientY - wrapperRect.top + offsetY : clientY + offsetY;
+      const clampedLeft = Math.min(Math.max(left, 0), (wrapperRect?.width || window.innerWidth) - (tooltipRect.width + 10));
+      chartTooltip.style.left = `${clampedLeft}px`;
+      chartTooltip.style.top = `${top}px`;
+    }
+
+    function hideTooltip() {
+      if (chartTooltip) chartTooltip.style.opacity = '0';
     }
 
     function formatDateLabel(date) {
@@ -1483,6 +1823,10 @@
       crudTableBody.innerHTML = '';
       if (!currentRecords.length) {
         crudTableBody.innerHTML = `<tr><td colspan="7" class="table-empty">No data loaded.</td></tr>`;
+        if (toggleEntriesBtn) {
+          toggleEntriesBtn.style.display = 'none';
+          toggleEntriesBtn.setAttribute('aria-expanded', 'false');
+        }
         return;
       }
       const fragment = document.createDocumentFragment();
@@ -1493,8 +1837,21 @@
           const timeB = b.rec.date instanceof Date ? b.rec.date.getTime() : 0;
           return timeB - timeA;
         });
-      sortedRecords.forEach(({ rec, index }) => {
+      const shouldClampRows = sortedRecords.length > MAX_CRUD_VISIBLE_ROWS;
+      if (toggleEntriesBtn) {
+        if (shouldClampRows) {
+          toggleEntriesBtn.style.display = 'inline-flex';
+          toggleEntriesBtn.textContent = showAllCrudRows ? 'Show less ▴' : 'Show more ▾';
+          toggleEntriesBtn.setAttribute('aria-expanded', showAllCrudRows ? 'true' : 'false');
+        } else {
+          toggleEntriesBtn.style.display = 'none';
+          toggleEntriesBtn.setAttribute('aria-expanded', 'false');
+          showAllCrudRows = false;
+        }
+      }
+      sortedRecords.forEach(({ rec, index }, rowIndex) => {
         const tr = document.createElement('tr');
+        const shouldHideRow = shouldClampRows && !showAllCrudRows && rowIndex >= MAX_CRUD_VISIBLE_ROWS;
         tr.innerHTML = `
           <td>${formatDateLabel(rec.date)}</td>
           <td>${formatUSD(rec.single)}</td>
@@ -1507,6 +1864,9 @@
             <button data-action="delete" data-index="${index}">Delete</button>
           </td>
         `;
+        if (shouldHideRow) {
+          tr.style.display = 'none';
+        }
         fragment.appendChild(tr);
       });
       crudTableBody.appendChild(fragment);
