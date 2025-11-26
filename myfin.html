@@ -1111,7 +1111,11 @@
         const tr = document.createElement('tr');
         tr.className = `hierarchy-row ${type}-row`;
         const indent = '<span class="indent"></span>'.repeat(indentLevel);
-        const toggle = `<button class="tree-toggle" data-type="${type}" data-key="${item.key}">${isExpanded ? '▾' : '▸'}</button>`;
+        //const toggle = `<button class="tree-toggle" data-type="${type}" data-key="${item.key}">${isExpanded ? '▾' : '▸'}</button>`;
+        const toggle = `<button class="tree-toggle" data-type="${type}" data-key="${item.key}">
+            ${isExpanded ? '-' : '+'}
+        </button>`;
+
         const diffClass = item.diff > 0 ? 'text-success' : (item.diff < 0 ? 'text-danger' : 'text-neutral');
         
         // For aggregated rows, specific values (Single, IRA) are ambiguous, usually last known or sum. 
