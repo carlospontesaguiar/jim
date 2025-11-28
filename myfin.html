@@ -1299,11 +1299,40 @@
             UI.form.scrollIntoView({ behavior: 'smooth' });
         }
         
-        if(action === 'delete') {
-            if(!confirm('Delete this entry?')) return;
-            // Handle delete logic... (Similar to submit but action='delete')
-            // Skipping implementation for brevity, same as original logic
-        }
+        if (action === 'delete') {
+    if (!confirm('Delete this entry?')) return;
+
+    const rec = state.records[idx];
+    const dateISO = rec.date.toISOString().split('T')[0];
+
+    setLoading(true);
+
+    sendToGoogleScript({
+        action: 'delete',
+        dateISO,
+        token: GOOGLE_SCRIPT_TOKEN
+    })
+    .then(() => {
+        // Remove record locally
+        state.records.splice(idx, 1);
+
+        // Recalculate totals/diffs
+        let prev = null;
+        state.records.forEach(r => {
+            r.total = (r.single || 0) + (r.ira || 0) + (r.trust || 0);
+            r.diff = prev !== null ? r.total - prev : 0;
+            prev = r.total;
+        });
+
+        updateUI();
+        log('Entry deleted successfully.');
+    })
+    .catch(err => {
+        alert('Error deleting from cloud: ' + err.message);
+    })
+    .finally(() => setLoading(false));
+}
+
     }
 
     function resetForm() {
